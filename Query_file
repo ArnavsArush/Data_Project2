@@ -1,0 +1,99 @@
+--Q1 Analyze sales performance over the years?
+
+-- Finding nulls if any
+SELECT * FROM sales
+WHERE order_date is null;
+-- There are nulls in order_date so we will use shipping date instaed
+
+SELECT EXTRACT(YEAR FROM shipping_date) AS shipping_year, 
+SUM(sales_amount) AS total_sales
+FROM sales
+GROUP BY shipping_year;
+
+--Q2 Find running total of sales amount by month?
+SELECT shipping_month, total_sales,
+SUM(total_sales) OVER(ORDER BY shipping_month) AS running_total_sales
+FROM(
+SELECT DATE_TRUNC('MONTH', shipping_date) AS shipping_month, 
+SUM(sales_amount) AS total_sales
+FROM sales
+GROUP BY DATE_TRUNC('MONTH', shipping_date)
+ORDER BY DATE_TRUNC('MONTH', shipping_date));
+
+/*Q3 Analyze the yearly performance of products by comparing
+each product's sales to both its average sales performance &
+the previous year's sales.*/ 
+WITH current_year_performance AS(
+SELECT EXTRACT (YEAR FROM l.shipping_date) AS sales_year,
+r.product_name,
+SUM(l.sales_amount) AS current_sales
+FROM sales l
+LEFT JOIN products r
+ON l.product_key = r.product_key
+GROUP BY EXTRACT(YEAR FROM l.shipping_date), r.product_name
+)
+--CURRENT YEAR SALES PERFORMANCE^.
+
+SELECT  sales_year, product_name, current_sales,
+--CURRENT YEAR SALES PERFORMANCE VS AVG SALES PERFORMANCE
+AVG(current_sales) OVER (PARTITION BY product_name) AS avg_sales,
+current_sales - AVG(current_sales) OVER (PARTITION BY product_name) AS deviation,
+CASE WHEN current_sales - AVG(current_sales) OVER (PARTITION BY product_name) > 0 THEN 'Above Average'
+WHEN current_sales - AVG(current_sales) OVER (PARTITION BY product_name) < 0 THEN 'Below Average'
+ELSE 'Average' END avg_change, --END
+--CURRENT YEAR SALES PERFORMANCE VS PREVIOUS YEAR SALES PERFORMANCE
+LAG(current_sales) OVER( PARTITION BY product_name ORDER BY sales_year) AS previous_year_sales,
+current_sales - LAG(current_sales) OVER( PARTITION BY product_name ORDER BY sales_year) AS c_p_deviation,
+CASE WHEN current_sales - LAG(current_sales) OVER( PARTITION BY product_name ORDER BY sales_year) > 0 THEN 'Increased'
+WHEN current_sales - LAG(current_sales) OVER( PARTITION BY product_name ORDER BY sales_year) < 0 THEN 'Decreased'
+ELSE 'No Change' END p_y_change
+FROM current_year_performance
+ORDER BY product_name
+;
+
+--Q4 WHICH CATEGORIES HAVE THE HIGHEST SALES FROM THE OVERALL SALES?
+WITH sales_per_category AS(SELECT b.category, SUM(a.sales_amount) AS total_sales
+FROM sales a 
+LEFT JOIN products b
+ON a.product_key = b.product_key
+GROUP BY b.category)
+--CONTRIBUTION OF EACH CATEGORY TO OVERALL SALES
+SELECT category, total_sales,
+SUM(total_sales) OVER() AS overall_sales,
+(total_sales/ SUM(total_sales) OVER ())* 100 AS sales_contribution 
+FROM sales_per_category
+
+--Q5 SEGMENT PRODUCTS INTO COST RANGES AND COUNT HOW MANY PRODUCTS FALL INTO EACH RANGE?
+WITH cost_ranges AS(
+SELECT product_name,cost,
+CASE WHEN cost < 100 THEN 'below 100'
+WHEN cost BETWEEN 100 AND 500 THEN '100-500'
+WHEN cost BETWEEN 500 AND 1000 THEN '500-1000'
+ELSE 'above 1000' END AS cost_range
+From products)
+--COUNT OF PRODUCTS IN EACH COST RANGE
+SELECT cost_range, COUNT(product_name) AS product_count
+FROM cost_ranges
+GROUP BY cost_range;
+
+--Q6 GROUP CUSTOMERS INTO THREE SEGMENTS BASED ON THEIR SPENDING BEHAVIOR:
+--VIP- AT LEAST 12 MONTHS OF HISTORY AND TOTAL SPENDING ABOVE 5000
+--REGULAR- AT LEAST 12 MONTHS OF HISTORY AND TOTAL SPENDING 5000 OR LESS
+--NEW- LESS THAN 12 MONTHS OF HISTORY
+WITH lifespan AS (SELECT b.customer_key,
+SUM( a.sales_amount) AS total_spending,
+MIN(a.shipping_date) AS first_purchase_date,
+MAX(a.shipping_date) AS last_purchase_date,
+(EXTRACT(YEAR FROM MAX(a.shipping_date)) - EXTRACT(YEAR FROM MIN(a.shipping_date))) * 12 +
+(EXTRACT(MONTH FROM MAX(a.shipping_date)) - EXTRACT(MONTH FROM MIN(a.shipping_date))) AS months_of_history
+FROM customers b 
+LEFT JOIN sales a
+ON b.customer_key = a.customer_key
+GROUP BY b.customer_key)
+--CUSTOMER SEGMENTATION BASED ON SPENDING BEHAVIOR
+SELECT COUNT(customer_key) AS number_of_customers, 
+CASE WHEN months_of_history >= 12 AND total_spending > 5000 THEN 'VIP'
+WHEN months_of_history >= 12 AND total_spending <= 5000 THEN 'REGULAR'
+ELSE 'NEW' END AS customer_segment
+FROM lifespan
+GROUP BY customer_segment;

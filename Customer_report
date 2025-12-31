@@ -1,0 +1,59 @@
+/*
+==============================================================================================
+CUSTOMER REPORT
+==============================================================================================
+-Purpose:
+         This report consolidates key customer metrics and behaviors
+
+-Highlights:
+         1 Gathers essential fields such as names, ages and transaction details
+         2 Segments customers into categories(VIP, Regular, New) and age groups
+         3 Aggregates customer level metrics:
+            * Total orders
+            * Total sales
+            * Total quantity purchased
+            * Total products
+            * Lifespan (in months)
+            
+4 Calculates valuable KPIs    
+         - Months since last purchase
+         - Average order value
+==============================================================================================
+*/                   
+
+WITH base_query AS(SELECT l.order_number,r.customer_key, r.customer_id, l.product_key,
+CONCAT( r.first_name,' ',r.last_name)AS customer_name, 
+EXTRACT(YEAR FROM AGE(r.birthdate))::int AS customer_age,
+r.birthdate,l.shipping_date,l.quantity,l.sales_amount
+FROM sales l
+LEFT JOIN customers r
+ON l.customer_key = r.customer_key)--1 Gathers essential fields such as names, ages and transaction details
+
+, customer_aggregation AS (
+SELECT COUNT(DISTINCT order_number) AS total_orders,
+COUNT(DISTINCT product_key) AS total_products, customer_name,
+customer_age, customer_id,
+MIN(shipping_date) AS first_purchase_date,
+MAX(shipping_date) AS last_purchase_date,
+(EXTRACT(YEAR FROM MAX(shipping_date)) - EXTRACT(YEAR FROM MIN(shipping_date))) * 12 +
+(EXTRACT(MONTH FROM MAX(shipping_date)) - EXTRACT(MONTH FROM MIN(shipping_date))) AS months_of_history,
+SUM(quantity) AS total_quantity,
+SUM(sales_amount) AS total_sales
+FROM base_query
+GROUP BY customer_key,customer_name, customer_age, customer_id)--3 Aggregates customer level metrics
+SELECT customer_name, customer_age, customer_id,
+CASE WHEN customer_age BETWEEN 20 AND 29 THEN '20-29'
+     WHEN customer_age BETWEEN 30 AND 39 THEN '30-39'
+     WHEN customer_age BETWEEN 40 AND 49 THEN '40-49'
+     ELSE '50 or above' 
+     END AS age_group,
+CASE WHEN months_of_history >= 12 AND total_sales > 5000 THEN 'VIP'
+WHEN months_of_history >= 12 AND total_sales <= 5000 THEN 'REGULAR'
+ELSE 'NEW' END AS customer_segment,--2 Segments customers into categories(VIP, Regular, New) and age groups
+--4 Calculating valuable KPIs 
+EXTRACT(MONTH FROM AGE(last_purchase_date))::int AS months_since_last_purchase,
+--COMPUTING AVG ORDER VALUE
+total_sales/ total_orders AS avg_order_value,
+total_orders, total_products, total_quantity, total_sales
+FROM customer_aggregation;
+
